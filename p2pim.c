@@ -400,7 +400,6 @@ int main(int argc, char *argv[])
                     }
                 }
                 else if(fds[i].revents & POLLIN && i == 1){
-                    printf("HERE\n");
                     int tempfd = accept(TCPfd, NULL, NULL);
                     if (tempfd < 0){
                         if (errno != EWOULDBLOCK){
@@ -416,8 +415,7 @@ int main(int argc, char *argv[])
                 }
                 else if(fds[i].revents & POLLIN){
                     int j = i-2;
-                	int type2 = 0;
-                	char signature[5];
+                    int type2 = 0;
                     Result = recv(fds[i].fd, messages[j] + msgLen[j], 1, 0);
                     if(Result < 0){
                         if(errno != EWOULDBLOCK){
@@ -426,17 +424,10 @@ int main(int argc, char *argv[])
                         break;
                     }
                     msgLen[j] += Result;
+                    DisplayMessage(messages[j], msgLen[j]);
                     if(messages[j][msgLen[j]-1] == '\0')
                         zeroCount[j]--;
                     if(msgLen[j] == 6){
-                        printf("hehe\n");
-                    	memcpy(signature, messages[j], 4);
-                    	if(strcmp(signature, "P2PI")){
-                            bzero(messages[j], BUFFER_SIZE);
-                            zeroCount[j] = 0;
-                            msgLen[j] = 0;
-                            continue;
-                        }
                     	type2 = ntohs(*(uint16_t *)(messages[j]+4));
                     	switch(type2){
                     		case ESTABLISH:
@@ -469,6 +460,7 @@ int main(int argc, char *argv[])
                         type2 = ntohs(*(uint16_t *)(messages[j]+4));
                         switch(type2){
                             case ESTABLISH:
+                                // DisplayMessage(messages[j], msgLen[j]);
                                 if(zeroCount[j] == 0){
                                     printf("%s\n", messages[j] + 6);
                                 }
