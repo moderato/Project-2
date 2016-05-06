@@ -18,6 +18,7 @@
 #include "userlist.h"
 
 #define BUFFER_SIZE 512
+#define MAX_FD      100
 #define DISCOVERY   0x0001
 #define REPLY       0x0002
 #define CLOSING     0x0003
@@ -29,9 +30,10 @@
 #define DATA        0x0009
 #define DISCONTINUE 0x000A
 
-int UDPfd, TCPfd, TCPs[98];
+int UDPfd, TCPfd, TCPs[MAX_FD-2], msgLen[MAX_FD-2], zeroCount[MAX_FD-2];
 char* const short_options = "n:u:t:i:m:p:";  
 char hostname[256], *username;
+char messages[MAX_FD-2][BUFFER_SIZE];
 int uport = 50550, tport = 50551, uitimeout = 5, umtimeout = 60;
 struct sockaddr_in BroadcastAddress;
 
@@ -70,6 +72,7 @@ void DisplayMessage(char *data, int length){
         printf("\n");
         Offset += 16;
     }
+    printf("\n");
 }
 
 struct option long_options[] = {
@@ -186,6 +189,8 @@ int main(int argc, char *argv[])
         exit(1);
     }
     username = getenv("USER");
+    memset(msgLen, 0, MAX_FD-2);
+    memset(msgLen, 0, MAX_FD-2);
 
     while((c = getopt_long (argc, argv, short_options, long_options, NULL)) != -1){  
         switch (c)  
@@ -324,7 +329,7 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        rv = poll(fds, 100, timeout * 1000);
+        rv = poll(fds, MAX_FD, timeout * 1000);
 
         if (rv == -1){
             perror("Polling"); 
@@ -334,7 +339,7 @@ int main(int argc, char *argv[])
             continue;
         } 
         else{
-            for(int i = 0; i < 100; i++){
+            for(int i = 0; i < MAX_FD; i++){
                 if(fds[i].revents & POLLIN && i == 0){
                     bzero(recvBuffer, sizeof(recvBuffer));
                     Result = recvfrom(UDPfd, recvBuffer, BUFFER_SIZE, 0, (struct sockaddr *)&ClientAddress, &ClientLength);
@@ -374,6 +379,10 @@ int main(int argc, char *argv[])
                             break;
                         case REPLY:
                             DisplayMessage(recvBuffer, Result);
+                            if(!inUserList(hostname2, username2))
+                                addUser(initUser(uport2, tport2, hostname2, username2));
+                            printList();
+                            UserCount++;
                             bzero(recvBuffer, sizeof(recvBuffer));
                             break;
                         case CLOSING:
@@ -391,32 +400,61 @@ int main(int argc, char *argv[])
                     }
                 }
                 else if(fds[i].revents & POLLIN && i == 1){
-                    TCPs[nfds-2] = accept(TCPfd, NULL, NULL);
-                    if (TCPs[nfds-2] < 0){
+                    int tempfd = accept(TCPfd, NULL, NULL);
+                    if (tempfd < 0){
                         if (errno != EWOULDBLOCK){
                             error("accept() failed");
                         }
                         break;
                     }
 
-                    printf("New incoming connection - %d\n", TCPs[nfds-2]);
-                    fds[nfds].fd = TCPs[nfds-2];
+                    printf("New incoming connection - %d\n", tempfd);
+                    fds[nfds].fd = tempfd;
                     fds[nfds].events = POLLIN | POLLPRI;
                     nfds++;
                 }
                 else if(fds[i].revents & POLLIN){
-                    while(tcpBuffer[0] != '\0'){
-                        Result = recv(fds[i].fd, tcpBuffer, sizeof(tcpBuffer), 0);
-                        if(Result < 0){
-                            if(errno != EWOULDBLOCK){
-                                error("recv() failed");
-                            }
-                            break;
+                	int type2 = 0;
+                	char signature[5];
+                    Result = recv(fds[i].fd, messages[i-2] + msgLen[i], 1, 0);
+                    if(Result < 0){
+                        if(errno != EWOULDBLOCK){
+                            error("recv() failed");
                         }
-                        strcat(recvBuffer, tcpBuffer);
+                        break;
                     }
-                    DisplayMessage(recvBuffer, Result);
-                    bzero(recvBuffer, sizeof(recvBuffer));
+                    msgLen[i] += Result;
+                    if(msgLen[i] == 6){
+                    	memcpy(signature, msgLen, 4);
+                    	if(strcmp(signature, "P2PI"))
+                    		break;
+                    	type2 = ntohs(*(uint16_t *)(recvBuffer+4));
+                    	switch(type2){
+                    		case ESTABLISH:
+                    			zeroCount[i] = 2;
+                    			break;
+                    		case ACCEPT:
+                    			zeroCount[i] = 0;
+                    			break;
+                    		case UNAVAILABLE:
+                    			zeroCount[i] = 0;
+                    			break;
+                    		case USERLIST:
+                    			zeroCount[i] = 0;
+                    			break;
+                    		case LISTREPLY:
+                    			zeroCount[i] = 2;
+                    			break;
+                    		case DATA:
+                    			zeroCount[i] = 2;
+                    			break;
+                    		case DISCONTINUE:
+                    			zeroCount[i] = 2;
+                    			break;
+
+                    	}
+                    	// DisplayMessage(messages[i-2], msgLen[i]);
+                    }
                 }
             }
         }
