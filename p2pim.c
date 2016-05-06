@@ -400,6 +400,7 @@ int main(int argc, char *argv[])
                     }
                 }
                 else if(fds[i].revents & POLLIN && i == 1){
+                    printf("HERE\n");
                     int tempfd = accept(TCPfd, NULL, NULL);
                     if (tempfd < 0){
                         if (errno != EWOULDBLOCK){
@@ -408,52 +409,82 @@ int main(int argc, char *argv[])
                         break;
                     }
 
-                    printf("New incoming connection - %d\n", tempfd);
+                    printf("New incoming connection: %d\n", tempfd);
                     fds[nfds].fd = tempfd;
                     fds[nfds].events = POLLIN | POLLPRI;
                     nfds++;
                 }
                 else if(fds[i].revents & POLLIN){
+                    int j = i-2;
                 	int type2 = 0;
                 	char signature[5];
-                    Result = recv(fds[i].fd, messages[i-2] + msgLen[i], 1, 0);
+                    Result = recv(fds[i].fd, messages[j] + msgLen[j], 1, 0);
                     if(Result < 0){
                         if(errno != EWOULDBLOCK){
                             error("recv() failed");
                         }
                         break;
                     }
-                    msgLen[i] += Result;
-                    if(msgLen[i] == 6){
-                    	memcpy(signature, msgLen, 4);
-                    	if(strcmp(signature, "P2PI"))
-                    		break;
-                    	type2 = ntohs(*(uint16_t *)(recvBuffer+4));
+                    msgLen[j] += Result;
+                    if(messages[j][msgLen[j]-1] == '\0')
+                        zeroCount[j]--;
+                    if(msgLen[j] == 6){
+                        printf("hehe\n");
+                    	memcpy(signature, messages[j], 4);
+                    	if(strcmp(signature, "P2PI")){
+                            bzero(messages[j], BUFFER_SIZE);
+                            zeroCount[j] = 0;
+                            msgLen[j] = 0;
+                            continue;
+                        }
+                    	type2 = ntohs(*(uint16_t *)(messages[j]+4));
                     	switch(type2){
                     		case ESTABLISH:
-                    			zeroCount[i] = 2;
+                    			zeroCount[j] = 1;
                     			break;
                     		case ACCEPT:
-                    			zeroCount[i] = 0;
+                    			zeroCount[j] = 0;
                     			break;
                     		case UNAVAILABLE:
-                    			zeroCount[i] = 0;
+                    			zeroCount[j] = 0;
                     			break;
                     		case USERLIST:
-                    			zeroCount[i] = 0;
+                    			zeroCount[j] = 0;
                     			break;
                     		case LISTREPLY:
-                    			zeroCount[i] = 2;
+                    			zeroCount[j] = 1;
                     			break;
                     		case DATA:
-                    			zeroCount[i] = 2;
+                    			zeroCount[j] = 1;
                     			break;
                     		case DISCONTINUE:
-                    			zeroCount[i] = 2;
+                    			zeroCount[j] = 1;
                     			break;
-
+                            default:
+                                break;
                     	}
-                    	// DisplayMessage(messages[i-2], msgLen[i]);
+                    }
+                    else if(msgLen[j] > 6){
+                        printf(">6\n");
+                        type2 = ntohs(*(uint16_t *)(messages[j]+4));
+                        switch(type2){
+                            case ESTABLISH:
+                                if(zeroCount[j] == 0){
+                                    printf("%s\n", messages[j] + 6);
+                                }
+                                break;
+                            case LISTREPLY:
+                                if(msgLen[j] == 10){
+                                    int numEntries = ntohl(*(uint32_t *)(recvBuffer+6));
+                                    zeroCount[j] += numEntries;
+                                }
+                                break;
+                            case DATA:
+                                zeroCount[j] = 1;
+                                break;
+                            default:
+                                break;
+                        }
                     }
                 }
             }
