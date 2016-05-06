@@ -449,20 +449,41 @@ int main(int argc, char *argv[])
                     			zeroCount[j] = 1;
                     			break;
                     		case DISCONTINUE:
-                    			zeroCount[j] = 1;
+                                        close(fds[i].fd);
+                                        printf("Socket %d closed\n");
+                                        bzero(messages[j], BUFFER_SIZE);
+                                        zeroCount[j] = 0;
+                                        msgLen[j] = 0;
                     			break;
                             default:
                                 break;
                     	}
                     }
                     else if(msgLen[j] > 6){
-                        printf(">6\n");
                         type2 = ntohs(*(uint16_t *)(messages[j]+4));
                         switch(type2){
                             case ESTABLISH:
                                 // DisplayMessage(messages[j], msgLen[j]);
                                 if(zeroCount[j] == 0){
-                                    printf("%s\n", messages[j] + 6);
+                                    printf("Like to connect with %s?\n", messages[j]+6);
+                                    char c;
+                                    do{
+                                        c = getchar();
+                                    }while(c != 'y' && c != 'n');
+                                    if(c == 'y'){
+                                        struct User* temp = searchName(messages[j]+6);
+                                        temp->TCPfd = fds[i].fd;
+                                        printf("Socket %d for %s stored.\n", temp->TCPfd, messages[j]+6);
+                                        bzero(messages[j], BUFFER_SIZE);
+                                        zeroCount[j] = 0;
+                                        msgLen[j] = 0;
+                                    }
+                                    else{
+                                        printf("Won't connect\n");
+                                        bzero(messages[j], BUFFER_SIZE);
+                                        zeroCount[j] = 0;
+                                        msgLen[j] = 0;
+                                    }
                                 }
                                 break;
                             case LISTREPLY:

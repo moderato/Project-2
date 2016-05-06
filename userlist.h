@@ -39,7 +39,7 @@ struct User* initUser(int UDPport, int TCPport, char* Hostname, char* Username){
 
 struct User* searchName(char* Username)
 {
-	struct User* temp = head;
+    struct User* temp = head;
     while(temp != NULL && strcmp(Username, temp->Username)){
     	temp = temp->nextUser;
     }
