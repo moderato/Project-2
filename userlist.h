@@ -37,26 +37,26 @@ struct User* initUser(int UDPport, int TCPport, char* Hostname, char* Username){
     }
 }
 
-struct User* searchName(char* Hostname, char* Username)
+struct User* searchName(char* Username)
 {
 	struct User* temp = head;
-    while(temp != NULL && (strcmp(Hostname, temp->Hostname) || strcmp(Username, temp->Username))){
+    while(temp != NULL && strcmp(Username, temp->Username)){
     	temp = temp->nextUser;
     }
     return temp;
 }
 
-int inUserList(char* Hostname, char* Username){
-    if(searchName(Hostname, Username) != NULL){
+int inUserList(char* Username){
+    if(searchName(Username) != NULL){
         return 1;
     }
     return 0;
 }
 
-void printUser(char* Hostname, char* Username)
+void printUser(char* Username)
 {
     struct User *temp = NULL;
-    temp = searchName(Hostname, Username);
+    temp = searchName(Username);
 
     if(temp == NULL){
     	printf("No such user!\n");
@@ -74,7 +74,7 @@ void printList()
     int i = 1;
     while(ptr != NULL){
         printf("%d. ", i++);
-        printUser(ptr->Hostname, ptr->Username);           
+        printUser(ptr->Username);           
         ptr = ptr->nextUser;
     }
 }
@@ -91,13 +91,13 @@ void addUser(struct User* ptr)
 }
 
 
-void deleteUser(char* Hostname, char* Username)
+void deleteUser(char* Username)
 {
     struct User *temp, *prev;
     temp = head;
     prev = head;
 
-    temp = searchName(Hostname, Username);
+    temp = searchName(Username);
 
     if(temp == NULL){
     	printf("No such user!\n");
