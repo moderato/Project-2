@@ -1,5 +1,4 @@
 #include <getopt.h>
-// #include <gtk/gtk.h> 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +17,7 @@
 #include "userlist.h"
 
 #define BUFFER_SIZE 512
-#define MAX_FD      100
+#define MAX_FD      50
 #define DISCOVERY   0x0001
 #define REPLY       0x0002
 #define CLOSING     0x0003
@@ -30,10 +29,10 @@
 #define DATA        0x0009
 #define DISCONTINUE 0x000A
 
-int UDPfd, TCPfd, TCPs[MAX_FD-2], msgLen[MAX_FD-2], zeroCount[MAX_FD-2];
+int UDPfd, TCPfd, TCPs[MAX_FD-3], msgLen[MAX_FD-3], zeroCount[MAX_FD-3];
 char* const short_options = "n:u:t:i:m:p:";  
 char hostname[256], *username;
-char messages[MAX_FD-2][BUFFER_SIZE];
+char messages[MAX_FD-3][BUFFER_SIZE];
 int uport = 50550, tport = 50551, uitimeout = 5, umtimeout = 60;
 struct sockaddr_in BroadcastAddress;
 
@@ -100,6 +99,7 @@ static void usage(void){
 int header(char* message, uint16_t type, int uport, int tport, char* username){
     int length = 0;
     uint16_t conversion = 0;
+    uint32_t conversionL = 0;
     char* temp = message;
     conversion = htons(type);
     message[0] = 'P';
@@ -109,14 +109,15 @@ int header(char* message, uint16_t type, int uport, int tport, char* username){
     temp += 4;
     memcpy(temp, &conversion, 2);                
     temp += 2;
+    length = temp - message;
     switch(type){
         case DISCOVERY:
         case REPLY:
         case CLOSING:
-            conversion = ntohs(uport);
+            conversion = htons(uport);
             memcpy(temp, &conversion, 2); 
             temp += 2;
-            conversion = ntohs(tport);
+            conversion = htons(tport);
             memcpy(temp, &conversion, 2); 
             temp += 2;
             memcpy(temp, hostname, strlen(hostname));
@@ -133,10 +134,18 @@ int header(char* message, uint16_t type, int uport, int tport, char* username){
             temp += strlen(username);
             *temp = 0;
             length = temp - message;
+            break;
         case ACCEPT:
         case UNAVAILABLE:
+            break;
         case USERLIST:
+            break;
         case LISTREPLY:
+            printf("here\n");
+            conversionL = htonl(getUserNum());
+            memcpy(temp, &conversionL, 4);
+            temp += 2;
+            length = temp - message;
         case DATA:
         case DISCONTINUE:
             break;
@@ -169,19 +178,57 @@ void SignalHandler(int param){
     exit(0);
 }
 
+void TCPmsgProcess(int j, int fd){
+    int type, length;
+    char sendBuffer[BUFFER_SIZE];
+    type = ntohs(*(uint16_t *)(messages[j]+4));
+    switch(type){
+        case ESTABLISH:
+        case LISTREPLY:
+        case DATA:
+            zeroCount[j] = 1;
+            break;
+        case ACCEPT:
+        case UNAVAILABLE:
+            break;
+        case USERLIST:
+            zeroCount[j] = 0;
+            // struct User* ptr = head;
+            // if(ptr == NULL){
+            //     printf("No users!\n");
+            //     break;
+            // }
+            // while(ptr != NULL){
+            //     printf("%s\n", ptr->Username);
+            //     ptr = ptr->nextUser;
+            // }
+            length = header(sendBuffer, LISTREPLY, uport, tport, username);
+            DisplayMessage(sendBuffer, length);
+            break;
+        case DISCONTINUE:
+            close(fd);
+            bzero(messages[j], BUFFER_SIZE);
+            zeroCount[j] = 0;
+            msgLen[j] = 0;
+            break;
+        default:
+            break;
+    }
+}
+
 
 int main(int argc, char *argv[])
 {
     int Result, rv;
     char recvBuffer[BUFFER_SIZE], sendBuffer[BUFFER_SIZE], tcpBuffer[1];
-    tcpBuffer[0] = -1;
     struct sockaddr_in ServerAddress, ClientAddress;
     socklen_t ClientLength = sizeof(ClientAddress);
     struct pollfd fds[100];
     int broadcast = 1, c, length, UserCount = 0, on = 1;
-    int timeout = 0, restartDiscover = 1;
+    int timeout = 0, restartDiscover = 1, stdinLength = 0;
     time_t start = time(NULL), diff;
-    int nfds = 2;
+    int nfds = 3;
+    char stdinBuffer[BUFFER_SIZE];
     // struct hostent* Server;
 
     if(-1 == gethostname(hostname, 255)){
@@ -189,8 +236,9 @@ int main(int argc, char *argv[])
         exit(1);
     }
     username = getenv("USER");
-    memset(msgLen, 0, MAX_FD-2);
-    memset(msgLen, 0, MAX_FD-2);
+    memset(msgLen, 0, MAX_FD-3);
+    memset(msgLen, 0, MAX_FD-3);
+    tcpBuffer[0] = -1;
 
     while((c = getopt_long (argc, argv, short_options, long_options, NULL)) != -1){  
         switch (c)  
@@ -262,11 +310,6 @@ int main(int argc, char *argv[])
         error("ERROR on binding");
     }
 
-    fds[0].fd = UDPfd;
-    fds[0].events = POLLIN | POLLPRI;
-
-
-
     TCPfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if(0 > TCPfd){
         error("ERROR opening TCP socket");
@@ -304,8 +347,15 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+
+    fds[0].fd = UDPfd;
+    fds[0].events = POLLIN | POLLPRI;
+
     fds[1].fd = TCPfd;
     fds[1].events = POLLIN | POLLPRI;
+
+    fds[2].fd = fileno(stdin);
+    fds[2].events = POLLIN | POLLPRI;
 
     timeout = uitimeout;
 
@@ -399,7 +449,7 @@ int main(int argc, char *argv[])
                             break;
                     }
                 }
-                else if(fds[i].revents & POLLIN && i == 1){
+                else if(fds[i].revents & POLLIN && i == 1){ 
                     int tempfd = accept(TCPfd, NULL, NULL);
                     if (tempfd < 0){
                         if (errno != EWOULDBLOCK){
@@ -413,10 +463,25 @@ int main(int argc, char *argv[])
                     fds[nfds].events = POLLIN | POLLPRI;
                     nfds++;
                 }
+                else if(fds[i].revents & POLLIN && i == 2){ // STDIN file descriptor
+                    Result = read(fds[i].fd, stdinBuffer + stdinLength, 1);
+                    if(Result < 0){
+                        if(errno != EWOULDBLOCK){
+                            error("recv() failed");
+                        }
+                        break;
+                    }
+                    stdinLength += Result;
+                    if(stdinBuffer[stdinLength-1] == '\n'){
+                        DisplayMessage(stdinBuffer, stdinLength);
+                        bzero(stdinBuffer, sizeof(stdinBuffer));
+                        stdinLength = 0;
+                    }
+                }
                 else if(fds[i].revents & POLLIN){
-                    int j = i-2;
+                    int j = i-3;
                     int type2 = 0;
-                    Result = recv(fds[i].fd, messages[j] + msgLen[j], 1, 0);
+                    Result = read(fds[i].fd, messages[j] + msgLen[j], 1);
                     if(Result < 0){
                         if(errno != EWOULDBLOCK){
                             error("recv() failed");
@@ -424,40 +489,12 @@ int main(int argc, char *argv[])
                         break;
                     }
                     msgLen[j] += Result;
-                    DisplayMessage(messages[j], msgLen[j]);
+                    // DisplayMessage(messages[j], msgLen[j]);
                     if(messages[j][msgLen[j]-1] == '\0')
                         zeroCount[j]--;
                     if(msgLen[j] == 6){
-                    	type2 = ntohs(*(uint16_t *)(messages[j]+4));
-                    	switch(type2){
-                    		case ESTABLISH:
-                    			zeroCount[j] = 1;
-                    			break;
-                    		case ACCEPT:
-                    			zeroCount[j] = 0;
-                    			break;
-                    		case UNAVAILABLE:
-                    			zeroCount[j] = 0;
-                    			break;
-                    		case USERLIST:
-                    			zeroCount[j] = 0;
-                    			break;
-                    		case LISTREPLY:
-                    			zeroCount[j] = 1;
-                    			break;
-                    		case DATA:
-                    			zeroCount[j] = 1;
-                    			break;
-                    		case DISCONTINUE:
-                                        close(fds[i].fd);
-                                        printf("Socket %d closed\n");
-                                        bzero(messages[j], BUFFER_SIZE);
-                                        zeroCount[j] = 0;
-                                        msgLen[j] = 0;
-                    			break;
-                            default:
-                                break;
-                    	}
+                        TCPmsgProcess(j, fds[i].fd);
+                        DisplayMessage(messages[j], msgLen[j]);
                     }
                     else if(msgLen[j] > 6){
                         type2 = ntohs(*(uint16_t *)(messages[j]+4));
@@ -469,17 +506,31 @@ int main(int argc, char *argv[])
                                     char c;
                                     do{
                                         c = getchar();
-                                    }while(c != 'y' && c != 'n');
-                                    if(c == 'y'){
+                                    }while(c != 'y' && c != 'n' && c != 'Y' && c != 'N');
+                                    if(c == 'y' || c == 'Y'){
                                         struct User* temp = searchName(messages[j]+6);
                                         temp->TCPfd = fds[i].fd;
                                         printf("Socket %d for %s stored.\n", temp->TCPfd, messages[j]+6);
+                                        bzero(sendBuffer, sizeof(sendBuffer));
+                                        length = header(sendBuffer, ACCEPT, 0, 0, NULL);
+                                        Result = write(fds[i].fd, sendBuffer, length);
+                                        if(0 > Result){
+                                            error("ERROR writing to socket");
+                                        }
+                                        DisplayMessage(sendBuffer, length);
                                         bzero(messages[j], BUFFER_SIZE);
                                         zeroCount[j] = 0;
                                         msgLen[j] = 0;
                                     }
                                     else{
                                         printf("Won't connect\n");
+                                        bzero(sendBuffer, sizeof(sendBuffer));
+                                        length = header(sendBuffer, UNAVAILABLE, 0, 0, NULL);
+                                        Result = write(fds[i].fd, sendBuffer, length);
+                                        if(0 > Result){
+                                            error("ERROR writing to socket");
+                                        }
+                                        DisplayMessage(sendBuffer, length);
                                         bzero(messages[j], BUFFER_SIZE);
                                         zeroCount[j] = 0;
                                         msgLen[j] = 0;
@@ -488,12 +539,26 @@ int main(int argc, char *argv[])
                                 break;
                             case LISTREPLY:
                                 if(msgLen[j] == 10){
-                                    int numEntries = ntohl(*(uint32_t *)(recvBuffer+6));
+                                    int numEntries = ntohl(*(uint32_t *)(messages[i]+6));
                                     zeroCount[j] += numEntries;
                                 }
                                 break;
                             case DATA:
-                                zeroCount[j] = 1;
+                                if(zeroCount[j] == 0){
+                                    DisplayMessage(messages[j], msgLen[j]);
+                                    bzero(messages[j], BUFFER_SIZE);
+                                    zeroCount[j] = 0;
+                                    msgLen[j] = 0;
+                                }
+                                break;
+                            case DISCONTINUE:
+                                if(zeroCount[j] == 0){
+                                    DisplayMessage(messages[j], msgLen[j]);
+                                    close(fds[i].fd);
+                                    bzero(messages[j], BUFFER_SIZE);
+                                    zeroCount[j] = 0;
+                                    msgLen[j] = 0;
+                                }
                                 break;
                             default:
                                 break;

@@ -39,7 +39,7 @@ struct User* initUser(int UDPport, int TCPport, char* Hostname, char* Username){
 
 struct User* searchName(char* Username)
 {
-    struct User* temp = head;
+	struct User* temp = head;
     while(temp != NULL && strcmp(Username, temp->Username)){
     	temp = temp->nextUser;
     }
@@ -144,6 +144,16 @@ void deleteList(struct User *ptr)
        free(ptr);
        ptr = temp;
     }
+}
+
+int getUserNum(){
+    int num = 0;
+    struct User* ptr = head;
+    while(ptr != NULL){
+        ptr = ptr->nextUser;
+        num++;
+    }
+    return num;
 }
 
 // int main(int argc, char const *argv[])
