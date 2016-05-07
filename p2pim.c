@@ -141,10 +141,37 @@ int header(char* message, uint16_t type, int uport, int tport, char* username){
         case USERLIST:
             break;
         case LISTREPLY:
-            printf("here\n");
             conversionL = htonl(getUserNum());
             memcpy(temp, &conversionL, 4);
-            temp += 2;
+            temp += 4;
+            struct User* ptr = head;
+            if(ptr == NULL){
+                printf("No users!\n");
+                length = -1;
+                break;
+            }
+            int count = -1;
+            while(ptr != NULL){
+                count++;
+                conversionL = htonl(count);
+                memcpy(temp, &conversionL, 4);
+                temp += 4;
+                conversion = htons(ptr->UDPport);
+                memcpy(temp, &conversion, 2);
+                temp += 2;
+                memcpy(temp, ptr->Hostname, strlen(ptr->Hostname));
+                temp += strlen(ptr->Hostname);
+                *temp = 0;
+                temp += 1;
+                conversion = htons(ptr->TCPport);
+                memcpy(temp, &conversion, 2);
+                temp += 2;
+                memcpy(temp, ptr->Username, strlen(ptr->Username));
+                temp += strlen(ptr->Username);
+                *temp = 0;
+                temp += 1;
+                ptr = ptr->nextUser;
+            }
             length = temp - message;
         case DATA:
         case DISCONTINUE:
@@ -179,7 +206,7 @@ void SignalHandler(int param){
 }
 
 void TCPmsgProcess(int j, int fd){
-    int type, length;
+    int type, length, Result;
     char sendBuffer[BUFFER_SIZE];
     type = ntohs(*(uint16_t *)(messages[j]+4));
     switch(type){
@@ -192,18 +219,15 @@ void TCPmsgProcess(int j, int fd){
         case UNAVAILABLE:
             break;
         case USERLIST:
-            zeroCount[j] = 0;
-            // struct User* ptr = head;
-            // if(ptr == NULL){
-            //     printf("No users!\n");
-            //     break;
-            // }
-            // while(ptr != NULL){
-            //     printf("%s\n", ptr->Username);
-            //     ptr = ptr->nextUser;
-            // }
             length = header(sendBuffer, LISTREPLY, uport, tport, username);
             DisplayMessage(sendBuffer, length);
+            Result = write(fd, sendBuffer, length);
+            if(0 > Result){
+	        error("ERROR writing to socket");
+            }
+            bzero(messages[j], BUFFER_SIZE);
+            zeroCount[j] = 0;
+            msgLen[j] = 0;
             break;
         case DISCONTINUE:
             close(fd);
