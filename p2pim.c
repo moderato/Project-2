@@ -14,10 +14,13 @@
 #include <time.h>
 #include <netdb.h>
 #include <errno.h>
+#include <termios.h>
+#include <ctype.h>
 #include "userlist.h"
 
 #define BUFFER_SIZE 512
 #define MAX_FD      50
+
 #define DISCOVERY   0x0001
 #define REPLY       0x0002
 #define CLOSING     0x0003
@@ -29,16 +32,36 @@
 #define DATA        0x0009
 #define DISCONTINUE 0x000A
 
+#define MESSAGEIN   0x0001
+#define NUMBERIN    0x0002
+#define REQUESTIN   0x0004
+
 int UDPfd, TCPfd, TCPs[MAX_FD-3], msgLen[MAX_FD-3], zeroCount[MAX_FD-3];
 char* const short_options = "n:u:t:i:m:p:";  
 char hostname[256], *username;
 char messages[MAX_FD-3][BUFFER_SIZE];
 int uport = 50550, tport = 50551, uitimeout = 5, umtimeout = 60;
-struct sockaddr_in BroadcastAddress;
+int nonCanState = 0;
+struct sockaddr_in BroadcastAddress, UserAddress;
+struct termios SavedTermAttributes;
+struct hostent* Client;
+struct pollfd fds[MAX_FD];
 
 void error(const char *message){
     perror(message);
     exit(1);
+}
+
+int firstAvailableFD(){
+    int i = 0;
+    while(i != 2 && fds[i].fd > 0){
+        i++;
+        if(i >= MAX_FD){
+            printf("No available fd\n");
+            return -1;
+        }
+    }
+    return i;
 }
 
 void DisplayMessage(char *data, int length){
@@ -137,8 +160,9 @@ int header(char* message, uint16_t type, int uport, int tport, char* username){
             break;
         case ACCEPT:
         case UNAVAILABLE:
-            break;
         case USERLIST:
+        case DATA:
+        case DISCONTINUE:
             break;
         case LISTREPLY:
             conversionL = htonl(getUserNum());
@@ -173,14 +197,36 @@ int header(char* message, uint16_t type, int uport, int tport, char* username){
                 ptr = ptr->nextUser;
             }
             length = temp - message;
-        case DATA:
-        case DISCONTINUE:
             break;
         default:
             length = -1;
             break;
     }
     return length;
+}
+
+void ResetCanonicalMode(int fd, struct termios *savedattributes){
+    tcsetattr(fd, TCSANOW, savedattributes);
+}
+
+void SetNonCanonicalMode(int fd, struct termios *savedattributes){
+    struct termios TermAttributes;
+    
+    // Make sure stdin is a terminal. 
+    if(!isatty(fd)){
+        fprintf (stderr, "Not a terminal.\n");
+        exit(0);
+    }
+    
+    // Save the terminal attributes so we can restore them later. 
+    tcgetattr(fd, savedattributes);
+    
+    // Set the funny terminal modes. 
+    tcgetattr (fd, &TermAttributes);
+    TermAttributes.c_lflag &= ~(ICANON | ECHO); // Clear ICANON and ECHO. 
+    TermAttributes.c_cc[VMIN] = 1;
+    TermAttributes.c_cc[VTIME] = 0;
+    tcsetattr(fd, TCSAFLUSH, &TermAttributes);
 }
 
 // Need to be modified
@@ -194,7 +240,9 @@ void SignalHandler(int param){
         error("ERROR send to client");
     }
     DisplayMessage(buffer, Result);
+    ResetCanonicalMode(STDIN_FILENO, &SavedTermAttributes);
     close(UDPfd);
+    close(STDIN_FILENO);
     struct User* temp = head;
     while(temp != NULL){
         close(temp->TCPfd);
@@ -241,18 +289,72 @@ void TCPmsgProcess(int j, int fd){
 }
 
 
+void processCommand(char c){
+    if(isprint(c)){
+        printf("RX: '%c' 0x%02X\n", c, c);   
+    }
+    else{
+        printf("RX: ' ' 0x%02X\n", c);
+    }    
+    switch(c){
+        case 'H': case 'h':
+            printf("Help:\n");
+            break;
+        case 'C': case 'c': // Connect to a user
+            printList();
+            if(getUserNum() != 0){
+                int num;
+                printf("Which one to connect? Input a number:\n");
+                ResetCanonicalMode(STDIN_FILENO, &SavedTermAttributes);
+                scanf("%d", &num);
+                SetNonCanonicalMode(STDIN_FILENO, &SavedTermAttributes);
+                struct User* temp = searchNameByNum(num);
+
+                if(temp->TCPfd <= 0)
+                    temp->TCPfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                Client = gethostbyname(temp->Hostname);
+                if(NULL == Client){
+                    fprintf(stderr,"ERROR, no such host\n");
+                    exit(0);
+                }
+                bzero((char *) &UserAddress, sizeof(UserAddress));
+                UserAddress.sin_family = AF_INET;
+                bcopy((char *)Client->h_addr, (char *)&UserAddress.sin_addr.s_addr, Client->h_length);
+                UserAddress.sin_port = htons(temp->TCPport);
+                if(0 > connect(temp->TCPfd, (struct sockaddr *)&UserAddress, sizeof(UserAddress))){
+                    error("ERROR connecting");
+                }
+                
+                int first = firstAvailableFD();
+                fds[first].fd = temp->TCPfd;
+                fds[first].events = POLLIN | POLLPRI;
+                printf("First is %d\n", first);
+            }
+            break;
+        case 'D': case 'd': // Delete a user
+            printList();
+            if(getUserNum() != 0){
+                printf("Which one to delete? Input a number:\n");
+            }
+            break;
+        case 'S': case 's':
+        default:
+            break;
+    }
+};
+
 int main(int argc, char *argv[])
 {
     int Result, rv;
     char recvBuffer[BUFFER_SIZE], sendBuffer[BUFFER_SIZE], tcpBuffer[1];
     struct sockaddr_in ServerAddress, ClientAddress;
     socklen_t ClientLength = sizeof(ClientAddress);
-    struct pollfd fds[100];
+    char RXChar;
     int broadcast = 1, c, length, UserCount = 0, on = 1;
-    int timeout = 0, restartDiscover = 1, stdinLength = 0;
+    int timeout = 0, restartDiscover = 1;
     time_t start = time(NULL), diff;
     int nfds = 3;
-    char stdinBuffer[BUFFER_SIZE];
+    // char stdinBuffer[BUFFER_SIZE];
     // struct hostent* Server;
 
     if(-1 == gethostname(hostname, 255)){
@@ -378,10 +480,11 @@ int main(int argc, char *argv[])
     fds[1].fd = TCPfd;
     fds[1].events = POLLIN | POLLPRI;
 
-    fds[2].fd = fileno(stdin);
+    fds[2].fd = STDIN_FILENO;
     fds[2].events = POLLIN | POLLPRI;
 
     timeout = uitimeout;
+    SetNonCanonicalMode(STDIN_FILENO, &SavedTermAttributes);
 
     while(1){       
         diff = time(NULL) - start;
@@ -483,36 +586,24 @@ int main(int argc, char *argv[])
                     }
 
                     printf("New incoming connection: %d\n", tempfd);
-                    fds[nfds].fd = tempfd;
-                    fds[nfds].events = POLLIN | POLLPRI;
-                    nfds++;
+                    int first = firstAvailableFD();
+                    fds[first].fd = tempfd;
+                    fds[first].events = POLLIN | POLLPRI;
                 }
                 else if(fds[i].revents & POLLIN && i == 2){ // STDIN file descriptor
-                    Result = read(fds[i].fd, stdinBuffer + stdinLength, 1);
-                    if(Result < 0){
-                        if(errno != EWOULDBLOCK){
-                            error("recv() failed");
-                        }
+                    read(STDIN_FILENO, &RXChar, 1);
+                    if(0x04 == RXChar){
                         break;
                     }
-                    stdinLength += Result;
-                    if(stdinBuffer[stdinLength-1] == '\n'){
-                        DisplayMessage(stdinBuffer, stdinLength);
-                        bzero(stdinBuffer, sizeof(stdinBuffer));
-                        stdinLength = 0;
+                    else{
+                        processCommand(RXChar);
                     }
                 }
                 else if(fds[i].revents & POLLIN){
                     int j = i-3;
                     int type2 = 0;
-                    Result = read(fds[i].fd, messages[j] + msgLen[j], 1);
-                    if(Result < 0){
-                        if(errno != EWOULDBLOCK){
-                            error("recv() failed");
-                        }
-                        break;
-                    }
-                    msgLen[j] += Result;
+                    read(fds[i].fd, messages[j] + msgLen[j], 1);
+                    msgLen[j]++;
                     // DisplayMessage(messages[j], msgLen[j]);
                     if(messages[j][msgLen[j]-1] == '\0')
                         zeroCount[j]--;
@@ -527,11 +618,13 @@ int main(int argc, char *argv[])
                                 // DisplayMessage(messages[j], msgLen[j]);
                                 if(zeroCount[j] == 0){
                                     printf("Like to connect with %s?\n", messages[j]+6);
-                                    char c;
+                                    char ch;
+                                    ResetCanonicalMode(STDIN_FILENO, &SavedTermAttributes);
                                     do{
-                                        c = getchar();
-                                    }while(c != 'y' && c != 'n' && c != 'Y' && c != 'N');
-                                    if(c == 'y' || c == 'Y'){
+                                        ch = getchar();
+                                    }while(ch != 'y' && ch!= 'n' && ch != 'Y' && ch != 'N');
+                                    SetNonCanonicalMode(STDIN_FILENO, &SavedTermAttributes);
+                                    if(ch == 'y' || ch == 'Y'){
                                         struct User* temp = searchName(messages[j]+6);
                                         temp->TCPfd = fds[i].fd;
                                         printf("Socket %d for %s stored.\n", temp->TCPfd, messages[j]+6);

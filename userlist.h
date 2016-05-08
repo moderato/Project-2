@@ -37,11 +37,30 @@ struct User* initUser(int UDPport, int TCPport, char* Hostname, char* Username){
     }
 }
 
-struct User* searchName(char* Username)
-{
+int getUserNum(){
+    int num = 0;
+    struct User* ptr = head;
+    while(ptr != NULL){
+        ptr = ptr->nextUser;
+        num++;
+    }
+    return num;
+}
+
+struct User* searchName(char* Username){
 	struct User* temp = head;
     while(temp != NULL && strcmp(Username, temp->Username)){
     	temp = temp->nextUser;
+    }
+    return temp;
+}
+
+struct User* searchNameByNum(int num){
+    int i = 0;
+    struct User* temp = head;
+    while(temp != NULL && i != num){
+        i++;
+        temp = temp->nextUser;
     }
     return temp;
 }
@@ -55,7 +74,7 @@ int inUserList(char* Username){
 
 void printUser(char* Username)
 {
-    struct User *temp = NULL;
+    struct User* temp = NULL;
     temp = searchName(Username);
 
     if(temp == NULL){
@@ -71,7 +90,12 @@ void printUser(char* Username)
 void printList()
 {
 	struct User* ptr = head;
-    int i = 1;
+    int i = 0;
+    if(ptr == NULL){
+        printf("0 user in list.\n");
+        return;
+    }
+    printf("%d user in list.\n", getUserNum());
     while(ptr != NULL){
         printf("%d. ", i++);
         printUser(ptr->Username);           
@@ -144,16 +168,6 @@ void deleteList(struct User *ptr)
        free(ptr);
        ptr = temp;
     }
-}
-
-int getUserNum(){
-    int num = 0;
-    struct User* ptr = head;
-    while(ptr != NULL){
-        ptr = ptr->nextUser;
-        num++;
-    }
-    return num;
 }
 
 // int main(int argc, char const *argv[])
