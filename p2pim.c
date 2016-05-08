@@ -336,10 +336,14 @@ void processCommand(char c){
                 char sendBuffer[BUFFER_SIZE];
                 int length = header(sendBuffer, ESTABLISH, temp->UDPport, temp->TCPport, temp->Username);
                 DisplayMessage(sendBuffer, length);
+<<<<<<< HEAD
                 int Result = write(temp->TCPfd, sendBuffer, length);
                 if(0 > Result){
                     error("ERROR writing to socket");
                 }
+=======
+
+>>>>>>> 610830d5d12ef4cdca84dbd25597986f650192f4
             }
             break;
         case 'D': case 'd': // Delete a user
