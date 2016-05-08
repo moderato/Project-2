@@ -299,6 +299,9 @@ void processCommand(char c){
     switch(c){
         case 'H': case 'h':
             printf("Help:\n");
+            printf("C/c: Connect to a user in list\n");
+            printf("D/d: Delete a user in list\n");
+            printf("S/s: Speak to a user in list\n");
             break;
         case 'C': case 'c': // Connect to a user
             printList();
@@ -307,11 +310,13 @@ void processCommand(char c){
                 printf("Which one to connect? Input a number:\n");
                 ResetCanonicalMode(STDIN_FILENO, &SavedTermAttributes);
                 scanf("%d", &num);
-                SetNonCanonicalMode(STDIN_FILENO, &SavedTermAttributes);
                 struct User* temp = searchNameByNum(num);
-
-                if(temp->TCPfd <= 0)
-                    temp->TCPfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                SetNonCanonicalMode(STDIN_FILENO, &SavedTermAttributes);
+                if(temp->TCPfd > 0){
+                    printf("Already connected, press 's' to speak\n");
+                    break;
+                }
+                temp->TCPfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
                 Client = gethostbyname(temp->Hostname);
                 if(NULL == Client){
                     fprintf(stderr,"ERROR, no such host\n");
@@ -328,7 +333,13 @@ void processCommand(char c){
                 int first = firstAvailableFD();
                 fds[first].fd = temp->TCPfd;
                 fds[first].events = POLLIN | POLLPRI;
-                printf("First is %d\n", first);
+                char sendBuffer[BUFFER_SIZE];
+                int length = header(sendBuffer, ESTABLISH, temp->UDPport, temp->TCPport, temp->Username);
+                DisplayMessage(sendBuffer, length);
+                int Result = write(temp->TCPfd, sendBuffer, length);
+                if(0 > Result){
+                    error("ERROR writing to socket");
+                }
             }
             break;
         case 'D': case 'd': // Delete a user
@@ -337,7 +348,27 @@ void processCommand(char c){
                 printf("Which one to delete? Input a number:\n");
             }
             break;
-        case 'S': case 's':
+        case 'S': case 's': // Speak to a user
+            printList();
+            if(getUserNum() != 0){
+                int num;
+                printf("Which one to connect? Input a number:\n");
+                //ResetCanonicalMode(STDIN_FILENO, &SavedTermAttributes);
+                //scanf("%d", &num);
+                //struct User* temp = searchNameByNum(num);
+
+                //if(temp->TCPfd <= 0){
+                  //  printf("Connection not established!\n");
+                  //  break;
+                //}
+                //printf("Input the message:\n");
+                //char sendBuffer[BUFFER_SIZE];
+                //int length = header(sendBuffer, DATA, temp->UDPport, temp->TCPport, temp->Username);
+                //fgets(sendBuffer + length, BUFFER_SIZE-1-length, stdin);
+                //length += strlen(sendBuffer+length);
+                //int Result = write(temp->TCPfd, sendBuffer, length);
+                //SetNonCanonicalMode(STDIN_FILENO, &SavedTermAttributes);
+            }
         default:
             break;
     }
