@@ -328,7 +328,10 @@ void processCommand(char c){
                 int first = firstAvailableFD();
                 fds[first].fd = temp->TCPfd;
                 fds[first].events = POLLIN | POLLPRI;
-                printf("First is %d\n", first);
+                char sendBuffer[BUFFER_SIZE];
+                int length = header(sendBuffer, ESTABLISH, temp->UDPport, temp->TCPport, temp->Username);
+                DisplayMessage(sendBuffer, length);
+
             }
             break;
         case 'D': case 'd': // Delete a user
