@@ -21,6 +21,7 @@
 #define BUFFER_SIZE 512
 #define MAX_FD      50
 
+// Packet type
 #define DISCOVERY   0x0001
 #define REPLY       0x0002
 #define CLOSING     0x0003
@@ -39,6 +40,14 @@
 #define INPUTMSG    0x0004
 #define TODELETE    0x0008
 #define TOCLOSE     0x0010
+#define TOREQUEST   0x0020
+
+// List reply subtype
+#define ENTRY       0x0001
+#define UDPPORT     0x0002
+#define HOSTNAME    0x0003
+#define TCPPORT     0x0004
+#define USERNAME    0x0005
 
 char* const short_options = "n:u:t:i:m:p:";  
 int UDPfd, TCPfd; // UDP and TCP server sockets
@@ -53,6 +62,8 @@ struct pollfd fds[MAX_FD];
 struct User* activeUser = NULL; // Who are we talking to
 char nonCanBuffer[BUFFER_SIZE]; // Buffer non-canonical mode input
 int nonCanLength = 0; // Length of the buffered message
+int listReplyCount;
+int listReplySubtype;
 // All local buffers in functions are called buf
 
 // Print error
@@ -72,6 +83,16 @@ int firstAvailableFD(){
         }
     }
     return i;
+}
+
+int searchFD(int fd){
+	int i = 3;
+	while(fds[i].fd != fd){
+		i++;
+		if(i >= MAX_FD)
+			return -1;
+	}
+	return i;
 }
 
 // Display message
@@ -216,7 +237,6 @@ int header(char* message, uint16_t type, int UDPport, int TCPport, char* Usernam
             length = -1;
             break;
     }
-    DisplayMessage(message,128);
     return length;
 }
 
@@ -247,7 +267,6 @@ void SetNonCanonicalMode(int fd, struct termios *savedattributes){
 // Need to be modified
 void SignalHandler(int param){
     char buf[BUFFER_SIZE];
-    bzero(buf, sizeof(buf));
     int length = header(buf, CLOSING, uport, tport, username);
     int Result = sendto(UDPfd, buf, length, 0, (struct sockaddr *)&BroadcastAddress, sizeof(BroadcastAddress));
     if(0 > Result){
@@ -268,34 +287,41 @@ void SignalHandler(int param){
     exit(0);
 }
 
-void TCPmsgProcess(int j, int fd){
+void TCPmsgProcess(int j, int *fd){
     int type, length, Result;
     char buf[BUFFER_SIZE];
-    bzero(buf, sizeof(buf));
     type = ntohs(*(uint16_t *)(messages[j]+4));
     switch(type){
         case ESTABLISH:
-        case LISTREPLY:
         case DATA:
             zeroCount[j] = 1;
             break;
         case ACCEPT:
+            printf("Connection accepted!\n");
+            bzero(messages[j], BUFFER_SIZE);
+            zeroCount[j] = 0;
+            msgLen[j] = 0;
+        	break;
         case UNAVAILABLE:
-            printf("here\n");
+            *fd = -1;
+            printf("Connection unavailable\n");
+            bzero(messages[j], BUFFER_SIZE);
+            zeroCount[j] = 0;
+            msgLen[j] = 0;
             break;
         case USERLIST:
             length = header(buf, LISTREPLY, uport, tport, username);
             DisplayMessage(buf, length);
-            Result = write(fd, buf, length);
+            Result = write(*fd, buf, length);
             if(0 > Result){
-	        error("ERROR writing to socket");
+	        	error("ERROR writing to socket");
             }
             bzero(messages[j], BUFFER_SIZE);
             zeroCount[j] = 0;
             msgLen[j] = 0;
             break;
         case DISCONTINUE:
-            close(fd);
+            *fd = -1;
             bzero(messages[j], BUFFER_SIZE);
             zeroCount[j] = 0;
             msgLen[j] = 0;
@@ -315,7 +341,8 @@ void processCommand(char c){
 	            printf("D/d: Delete a user in list\n");
 	            printf("S/s: Speak to a user in list\n");
 	            printf("N/n: Close a user in list\n");
-	            printf("L/l: List users");
+	            printf("L/l: List users\n");
+	            printf("R/r: Request User List\n");
 	            break;
 	        case 'C': case 'c': // Connect to a user
 	            if(getUserNum() != 0){
@@ -353,6 +380,15 @@ void processCommand(char c){
 	            	printf("No user to close\n");
 	            }
 	        	break;
+	        case 'R': case 'r': // Request user list
+	        	if(getUserNum() != 0){
+	                printf("Which one to request user list? Input a number:\n");
+	                nonCanState = TOREQUEST;
+	            }
+	            else{
+	            	printf("No user to request\n");
+	            }
+	        	break;
 	        default:
 	        	printf("Unknown command! Press 'h' to see help\n");
 	        	nonCanState = NORMAL;
@@ -380,7 +416,7 @@ void processCommand(char c){
     					num = atoi(nonCanBuffer);
     					if(num == 0){
     						printf("Not a valid number\n");
-    						bzero(nonCanBuffer, sizeof(nonCanBuffer));
+    						bzero(nonCanBuffer, BUFFER_SIZE);
     						nonCanLength = 0;
     						nonCanState = NORMAL;
     						break;
@@ -388,7 +424,7 @@ void processCommand(char c){
     				}
 					struct User* temp = searchNameByNum(num);
 	                if(temp->TCPfd > 0){
-	                    printf("Already connected, press 's' to speak\n");
+	                    printf("Already connected! Press 's' to speak\n");
 	                }
 	                else{
 		                temp->TCPfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -410,7 +446,6 @@ void processCommand(char c){
 		                fds[first].events = POLLIN | POLLPRI;
 		                printf("Add FD %d to array.\n", first);
 		                char buf[BUFFER_SIZE];
-		                bzero(buf, sizeof(buf));
 		                int length = header(buf, ESTABLISH, 0, 0, temp->Username);
 		                DisplayMessage(buf, length);
 		                int Result = write(temp->TCPfd, buf, length);
@@ -418,7 +453,7 @@ void processCommand(char c){
 		                    error("ERROR writing to socket");
 		                }
 		            }
-	                bzero(nonCanBuffer, sizeof(nonCanBuffer));
+	                bzero(nonCanBuffer, BUFFER_SIZE);
     				nonCanLength = 0;
     				nonCanState = NORMAL;
     			}
@@ -437,14 +472,14 @@ void processCommand(char c){
     					if(num == 0){
     						printf("Not a valid number\n");
     						nonCanState = NORMAL;
-    						bzero(nonCanBuffer, sizeof(nonCanBuffer));
+    						bzero(nonCanBuffer, BUFFER_SIZE);
     						nonCanLength = 0;
     						break;
     					}
     				}
 					struct User* temp = searchNameByNum(num);
 	                if(temp->TCPfd <= 0){
-	                    printf("Connection not established!\n");
+	                    printf("Connection not established! Press 'c' to connect\n");
 	                    nonCanState = NORMAL;
 	                }
 	                else{
@@ -453,7 +488,7 @@ void processCommand(char c){
 	                	nonCanState = INPUTMSG;
 	                	printUser(temp->Username);
 	                }
-	                bzero(nonCanBuffer, sizeof(nonCanBuffer));
+	                bzero(nonCanBuffer, BUFFER_SIZE);
     				nonCanLength = 0;
     			}
     			break;
@@ -464,19 +499,18 @@ void processCommand(char c){
     			}
     			else{
     				char buf[BUFFER_SIZE];
-    				bzero(buf, sizeof(buf));
 	                int length = header(buf, DATA, 0, 0, NULL);
 	                memcpy(buf+length, nonCanBuffer, strlen(nonCanBuffer));
 	                length += strlen(buf+length);
 	                buf[length++] = 0;
 	                // printUser(activeUser->Username);
 	                // printf("Active FD %d\n", activeUser->TCPfd);
-	                DisplayMessage(buf, length);
+	                // DisplayMessage(buf, length);
 	                int Result = write(activeUser->TCPfd, buf, length);
 	                if(0 > Result){
 	                    error("ERROR writing to socket");
 	                }
-	                bzero(nonCanBuffer, sizeof(nonCanBuffer));
+	                bzero(nonCanBuffer, BUFFER_SIZE);
     				nonCanLength = 0;
     				nonCanState = NORMAL;
     				activeUser = NULL;
@@ -494,7 +528,7 @@ void processCommand(char c){
     					num = atoi(nonCanBuffer);
     					if(num == 0){
     						printf("Not a valid number\n");
-    						bzero(nonCanBuffer, sizeof(nonCanBuffer));
+    						bzero(nonCanBuffer, BUFFER_SIZE);
     						nonCanLength = 0;
     						nonCanState = NORMAL;
     						break;
@@ -505,7 +539,7 @@ void processCommand(char c){
     				printf("The following user is deleted!\n");
     				printUser(temp->Username);
     				deleteUser(temp->Username);
-	                bzero(nonCanBuffer, sizeof(nonCanBuffer));
+	                bzero(nonCanBuffer, BUFFER_SIZE);
     				nonCanLength = 0;
     				nonCanState = NORMAL;
     			}
@@ -523,7 +557,7 @@ void processCommand(char c){
     					num = atoi(nonCanBuffer);
     					if(num == 0){
     						printf("Not a valid number\n");
-    						bzero(nonCanBuffer, sizeof(nonCanBuffer));
+    						bzero(nonCanBuffer, BUFFER_SIZE);
     						nonCanLength = 0;
     						nonCanState = NORMAL;
     						break;
@@ -535,16 +569,54 @@ void processCommand(char c){
 	                }
 	                else{
 		                char buf[BUFFER_SIZE];
-		                bzero(buf, sizeof(buf));
 		                int length = header(buf, DISCONTINUE, 0, 0, NULL);
-		                DisplayMessage(buf, length);
+		                // DisplayMessage(buf, length);
 		                int Result = write(temp->TCPfd, buf, length);
 		                if(0 > Result){
 		                    error("ERROR writing to socket");
 		                }
-		                close(temp->TCPfd);
+		                int i = searchFD(temp->TCPfd);
+		                temp->TCPfd = -1;
+		                fds[i].fd = -1;
 		            }
-	                bzero(nonCanBuffer, sizeof(nonCanBuffer));
+	                bzero(nonCanBuffer, BUFFER_SIZE);
+    				nonCanLength = 0;
+    				nonCanState = NORMAL;
+    			}
+    			break;
+    		case TOREQUEST:
+    			if(c != '\n'){
+    				nonCanBuffer[nonCanLength] = c;
+    				nonCanLength++;
+    			}
+    			else{
+    				int num;
+    				if(nonCanLength == 1 && nonCanBuffer[0] == '0')
+    					num = 0;
+    				else{
+    					num = atoi(nonCanBuffer);
+    					if(num == 0){
+    						printf("Not a valid number\n");
+    						bzero(nonCanBuffer, BUFFER_SIZE);
+    						nonCanLength = 0;
+    						nonCanState = NORMAL;
+    						break;
+    					}
+    				}
+					struct User* temp = searchNameByNum(num);
+	                if(temp->TCPfd <= 0){
+	                    printf("Connection closed, press 'c' to connect\n");
+	                }
+	                else{
+		                char buf[BUFFER_SIZE];
+		                int length = header(buf, USERLIST, 0, 0, NULL);
+		                // DisplayMessage(buf, length);
+		                int Result = write(temp->TCPfd, buf, length);
+		                if(0 > Result){
+		                    error("ERROR writing to socket");
+		                }
+		            }
+	                bzero(nonCanBuffer, BUFFER_SIZE);
     				nonCanLength = 0;
     				nonCanState = NORMAL;
     			}
@@ -561,8 +633,7 @@ int main(int argc, char *argv[])
     char recvBuffer[BUFFER_SIZE], sendBuffer[BUFFER_SIZE];
     struct sockaddr_in ServerAddress, ClientAddress;
     socklen_t ClientLength = sizeof(ClientAddress);
-    char RXChar;
-    int broadcast = 1, UserCount = 0, on = 1;
+    int broadcast = 1, on = 1;
     int timeout = 0, restartDiscover = 1;
     time_t start = time(NULL), diff;
 
@@ -695,7 +766,7 @@ int main(int argc, char *argv[])
     while(1){       
         diff = time(NULL) - start;
 
-        if((diff >= timeout && UserCount <= 0) || restartDiscover){
+        if((diff >= timeout && getUserNum() <= 0) || restartDiscover){
             start = time(NULL);
             bzero(sendBuffer, sizeof(sendBuffer));
             length = header(sendBuffer, DISCOVERY, uport, tport, username);
@@ -704,7 +775,7 @@ int main(int argc, char *argv[])
             }
             printf("Sending discovery, timeout = %ds\n", timeout);
             restartDiscover = 0;
-            DisplayMessage(sendBuffer, length);
+            // DisplayMessage(sendBuffer, length);
             Result = sendto(UDPfd, sendBuffer, length, 0, (struct sockaddr *)&BroadcastAddress, sizeof(BroadcastAddress));
             if(0 > Result){
                 error("ERROR send to client");
@@ -756,26 +827,23 @@ int main(int argc, char *argv[])
                                 if(!inUserList(username2))
                                     addUser(initUser(uport2, tport2, hostname2, username2));
                                 // printList();
-                                UserCount++;
                             }
                             bzero(recvBuffer, sizeof(recvBuffer));
                             break;
                         case REPLY:
-                            DisplayMessage(recvBuffer, Result);
+                            // DisplayMessage(recvBuffer, Result);
                             if(!inUserList(username2))
                                 addUser(initUser(uport2, tport2, hostname2, username2));
                             // printList();
-                            UserCount++;
                             bzero(recvBuffer, sizeof(recvBuffer));
                             break;
                         case CLOSING:
-                            DisplayMessage(recvBuffer, Result);
+                            // DisplayMessage(recvBuffer, Result);
                             bzero(recvBuffer, sizeof(recvBuffer));
                             start = time(NULL);
                             restartDiscover = 1;
                             timeout = uitimeout;
                             deleteUser(username2);
-                            UserCount--;
                             continue;
                             break;
                         default:
@@ -797,12 +865,12 @@ int main(int argc, char *argv[])
                     fds[first].events = POLLIN | POLLPRI;
                 }
                 else if(fds[i].revents & POLLIN && i == 2){ // STDIN file descriptor
-                    read(STDIN_FILENO, &RXChar, 1);
-                    if(0x04 == RXChar){
+                    read(STDIN_FILENO, &c, 1);
+                    if(0x04 == c){
                         break;
                     }
                     else{
-                        processCommand(RXChar);
+                        processCommand(c);
                     }
                 }
                 else if(fds[i].revents & POLLIN){
@@ -814,8 +882,7 @@ int main(int argc, char *argv[])
                     if(messages[j][msgLen[j]-1] == '\0')
                         zeroCount[j]--;
                     if(msgLen[j] == 6){
-                        TCPmsgProcess(j, fds[i].fd);
-                        DisplayMessage(messages[j], msgLen[j]);
+                        TCPmsgProcess(j, &fds[i].fd);
                     }
                     else if(msgLen[j] > 6){
                         type2 = ntohs(*(uint16_t *)(messages[j]+4));
@@ -862,13 +929,58 @@ int main(int argc, char *argv[])
                                 break;
                             case LISTREPLY:
                                 if(msgLen[j] == 10){
-                                    int numEntries = ntohl(*(uint32_t *)(messages[i]+6));
-                                    zeroCount[j] += numEntries;
+                                    int numEntries = ntohl(*(uint32_t *)(messages[j]+6));
+                                    zeroCount[j] = 2 * numEntries;
+                                    listReplyCount = 10;
+                                    listReplySubtype = ENTRY;
+                                }
+                                else if(msgLen[j] > 10){
+                                	switch(listReplySubtype){
+                                		case ENTRY:
+                                			if(messages[j][msgLen[j]-1] == '\0'){
+                                                zeroCount[j]++;
+                                			}
+                                            if(msgLen[j] - listReplyCount == 4){
+                                            	printf("ENTRY %d, ", ntohl(*(uint32_t *)(messages[j]+listReplyCount)));
+                                            	listReplySubtype = UDPPORT;
+                                            	listReplyCount += 4;
+                                            }
+                                            break;
+                                		case UDPPORT:
+                                			if(messages[j][msgLen[j]-1] == '\0'){
+                                                zeroCount[j]++;
+                                			}
+                                            if(msgLen[j] - listReplyCount == 2){
+                                            	printf("UDP port %d, ", ntohs(*(uint16_t *)(messages[j]+listReplyCount)));
+                                            	listReplySubtype = UDPPORT;
+                                            	listReplyCount += 2;
+                                            }
+                                            break;
+                                        case HOSTNAME:
+                                            if(messages[j][msgLen[j]-1] == '\0'){
+                                            	char hostname2 = messages[j] + listReplyCount;
+                                            	printf("hostname %s", hostname2);
+
+
+                                        	break;
+                                        case TCPPORT:
+                                			if(messages[j][msgLen[j]-1] == '\0'){
+                                                zeroCount[j]++;
+                                			}
+                                            if(msgLen[j] - listReplyCount == 2){
+                                            	printf("TCP port %d, ", ntohs(*(uint16_t *)(messages[j]+listReplyCount)));
+                                            	listReplySubtype = UDPPORT;
+                                            	listReplyCount += 2;
+                                            }
+                                            break;                                     
+                                        default:
+                                            break;
+                                	}
                                 }
                                 break;
                             case DATA:
                                 if(zeroCount[j] == 0){
-                                    DisplayMessage(messages[j], msgLen[j]);
+                                    // DisplayMessage(messages[j], msgLen[j]);
                                     bzero(messages[j], BUFFER_SIZE);
                                     zeroCount[j] = 0;
                                     msgLen[j] = 0;
