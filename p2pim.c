@@ -943,7 +943,7 @@ int main(int argc, char *argv[])
                                             if(msgLen[j] - listReplyCount == 4){
                                             	printf("ENTRY %d, ", ntohl(*(uint32_t *)(messages[j]+listReplyCount)));
                                             	listReplySubtype = UDPPORT;
-                                            	listReplyCount += 4;
+                                            	listReplyCount = msgLen[j];
                                             }
                                             break;
                                 		case UDPPORT:
@@ -952,16 +952,17 @@ int main(int argc, char *argv[])
                                 			}
                                             if(msgLen[j] - listReplyCount == 2){
                                             	printf("UDP port %d, ", ntohs(*(uint16_t *)(messages[j]+listReplyCount)));
-                                            	listReplySubtype = UDPPORT;
-                                            	listReplyCount += 2;
+                                            	listReplySubtype = HOSTNAME;
+                                            	listReplyCount = msgLen[j];
                                             }
                                             break;
                                         case HOSTNAME:
                                             if(messages[j][msgLen[j]-1] == '\0'){
-                                            	char hostname2 = messages[j] + listReplyCount;
-                                            	printf("hostname %s", hostname2);
-
-
+                                            	char *hostname2 = messages[j] + listReplyCount;
+                                            	printf("hostname %s, ", hostname2);
+                                            	listReplySubtype = TCPPORT;
+                                            	listReplyCount = msgLen[j];
+                                            }
                                         	break;
                                         case TCPPORT:
                                 			if(messages[j][msgLen[j]-1] == '\0'){
@@ -969,10 +970,25 @@ int main(int argc, char *argv[])
                                 			}
                                             if(msgLen[j] - listReplyCount == 2){
                                             	printf("TCP port %d, ", ntohs(*(uint16_t *)(messages[j]+listReplyCount)));
-                                            	listReplySubtype = UDPPORT;
+                                            	listReplySubtype = USERNAME;
                                             	listReplyCount += 2;
                                             }
-                                            break;                                     
+                                            break;
+                                        case USERNAME:
+                                            if(messages[j][msgLen[j]-1] == '\0'){
+                                            	char *username2 = messages[j] + listReplyCount;
+                                            	printf("username %s\n", username2);
+                                            	if(zeroCount[j] != 0){
+                                            		listReplySubtype = ENTRY;
+                                            	    listReplyCount = msgLen[j];
+                                            	}
+                                            	else{
+										            bzero(messages[j], BUFFER_SIZE);
+										            zeroCount[j] = 0;
+										            msgLen[j] = 0;
+                                            	}
+                                            }
+                                            break;
                                         default:
                                             break;
                                 	}
