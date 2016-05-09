@@ -65,6 +65,14 @@ struct User* searchNameByNum(int num){
     return temp;
 }
 
+struct User* searchNameByTCP(int num){
+    struct User* temp = head;
+    while(temp != NULL && temp->TCPfd != num){
+        temp = temp->nextUser;
+    }
+    return temp;
+}
+
 int inUserList(char* Username){
     if(searchName(Username) != NULL){
         return 1;
@@ -81,6 +89,7 @@ void printUser(char* Username)
     	printf("No such user!\n");
     	return;
     }
+    printf("TCP fd: %d, ", temp->TCPfd);
     printf("Host name: %s, ", temp->Hostname);
     printf("User name: %s, ", temp->Username);
     printf("UDP port: %d, ", temp->UDPport);
