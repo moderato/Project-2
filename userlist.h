@@ -39,6 +39,8 @@ struct User* initUser(int UDPport, int TCPport, char* Hostname, char* Username){
 
 int getUserNum(){
     int num = 0;
+    if(head == NULL)
+        return num;
     struct User* ptr = head;
     while(ptr != NULL){
         ptr = ptr->nextUser;
@@ -47,7 +49,7 @@ int getUserNum(){
     return num;
 }
 
-struct User* searchName(char* Username){
+struct User* searchUser(char* Username){
 	struct User* temp = head;
     while(temp != NULL && strcmp(Username, temp->Username)){
     	temp = temp->nextUser;
@@ -55,7 +57,7 @@ struct User* searchName(char* Username){
     return temp;
 }
 
-struct User* searchNameByNum(int num){
+struct User* searchUserByNum(int num){
     int i = 0;
     struct User* temp = head;
     while(temp != NULL && i != num){
@@ -65,7 +67,7 @@ struct User* searchNameByNum(int num){
     return temp;
 }
 
-struct User* searchNameByTCP(int num){
+struct User* searchUserByTCP(int num){
     struct User* temp = head;
     while(temp != NULL && temp->TCPfd != num){
         temp = temp->nextUser;
@@ -74,7 +76,7 @@ struct User* searchNameByTCP(int num){
 }
 
 int inUserList(char* Username){
-    if(searchName(Username) != NULL){
+    if(searchUser(Username) != NULL){
         return 1;
     }
     return 0;
@@ -83,7 +85,7 @@ int inUserList(char* Username){
 void printUser(char* Username)
 {
     struct User* temp = NULL;
-    temp = searchName(Username);
+    temp = searchUser(Username);
 
     if(temp == NULL){
     	printf("No such user!\n");
@@ -127,16 +129,14 @@ void addUser(struct User* ptr)
 void deleteUser(char* Username)
 {
     struct User *temp, *prev;
-    temp = head;
     prev = head;
-
-    temp = searchName(Username);
+    temp = searchUser(Username);
 
     if(temp == NULL){
-    	printf("No such user!\n");
+    	// printf("No such user!\n");
     	return;
     }
-
+    
     if(temp == prev){
         head = head->nextUser;
         if(end == temp) 
@@ -161,12 +161,12 @@ void deleteList(struct User *ptr)
 
     if(head == NULL) return; 
 
-    if(ptr == head) {
+    if(ptr == head){
         head = NULL;
         end = NULL;
     }
     else{
-        temp = head; 
+        temp = head;
         while(temp->nextUser != ptr)
             temp = temp->nextUser;
         end = temp;
@@ -178,22 +178,5 @@ void deleteList(struct User *ptr)
        ptr = temp;
     }
 }
-
-// int main(int argc, char const *argv[])
-// {
-// 	addUser(initUser(2,3,"ab","bc"));
-// 	addUser(initUser(5,6,"cd","de"));
-// 	addUser(initUser(8,9,"ef","fg"));
-	
-// 	deleteUser("cd","de");
-// 	printlist();
-// 	deleteUser("ab","bc");
-// 	printlist();
-// 	addUser(initUser(2,3,"ab","bc"));
-// 	printlist();
-
-	
-// 	return 0;
-// }
 
 #endif
